@@ -52,6 +52,9 @@ FG.Renderer = (() => {
     drawOre(x0, y0, x1, y1);
     drawGrid(x0, y0, x1, y1);
     drawBuildings(x0, y0, x1, y1);
+    drawSites(x0, y0, x1, y1);
+    drawCaptureRect();
+    drawBlueprint();
     drawGhost();
 
     ctx.restore();
@@ -152,8 +155,8 @@ FG.Renderer = (() => {
     }
     // 地面物料堆（拆除保留的物料）
     drawPiles(x0, y0, x1, y1);
-    // 选中高亮
-    if (game.selection) {
+    // 选中高亮（施工点高亮在 drawSites 中处理）
+    if (game.selection && game.selection.planId === undefined) {
       const b = game.selection;
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2;
@@ -484,6 +487,97 @@ FG.Renderer = (() => {
     ctx.fillStyle = '#2b3140';
     ctx.beginPath(); ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+  }
+
+  // ==================== 施工点（蓝图建筑幻影） ====================
+  function drawSites(x0, y0, x1, y1) {
+    const t = T();
+    const con = game.construction;
+    if (!con || !con.sites.size) return;
+    for (const [k, site] of con.sites) {
+      const [x, y] = k.split(',').map(Number);
+      if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+      const px = x * t, py = y * t;
+      const waiting = site.status === 'waiting';
+      // 占位底色：等待=橙黄，施工=蓝
+      ctx.fillStyle = waiting ? 'rgba(232,163,61,0.14)' : 'rgba(77,163,255,0.14)';
+      ctx.fillRect(px + 1, py + 1, t - 2, t - 2);
+      // 虚线幻影边框
+      ctx.strokeStyle = waiting ? '#e8a33d' : '#4da3ff';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(px + 2, py + 2, t - 4, t - 4);
+      ctx.setLineDash([]);
+      // 半透明建筑幻影
+      ctx.globalAlpha = 0.55;
+      const tmp = { def: FG.Buildings.byId(site.type), type: site.type, x, y, dir: site.dir, items: [], held: null, level: 0, fluidType: null, status: 'idle', slots: { inputs: {}, outputs: {} }, chest: [], rr: 0 };
+      if (tmp.def.beltTier !== undefined) drawBelt(tmp, px, py, t);
+      else drawBuilding(tmp, px, py, t);
+      ctx.globalAlpha = 1;
+      // 进度条（缺料阶段=预留比例，齐料后=建造进度）
+      const p = con.progressOf(site);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(px + 3, py + t - 6, t - 6, 3);
+      ctx.fillStyle = waiting ? '#e8a33d' : '#5aa8ff';
+      ctx.fillRect(px + 3, py + t - 6, (t - 6) * Math.min(1, p), 3);
+    }
+    // 选中施工点高亮
+    const sel = game.selection;
+    if (sel && sel.planId !== undefined) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(sel.x * t + 1, sel.y * t + 1, t - 2, t - 2);
+    }
+  }
+
+  // ==================== 框选矩形（生成蓝图） ====================
+  function drawCaptureRect() {
+    const r = game.dragRect;
+    if (!r) return;
+    const t = T();
+    const xa = Math.min(r.x0, r.x1), ya = Math.min(r.y0, r.y1);
+    const w = Math.abs(r.x1 - r.x0) + 1, h = Math.abs(r.y1 - r.y0) + 1;
+    ctx.fillStyle = 'rgba(77,163,255,0.12)';
+    ctx.fillRect(xa * t, ya * t, w * t, h * t);
+    ctx.strokeStyle = '#4da3ff';
+    ctx.lineWidth = 1.6;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(xa * t + 0.5, ya * t + 0.5, w * t - 1, h * t - 1);
+    ctx.setLineDash([]);
+  }
+
+  // ==================== 蓝图旋转预览（提交前） ====================
+  function drawBlueprint() {
+    const bp = game.blueprint;
+    if (game.bpMode !== 'placing' || !bp || bp.ax === undefined) return;
+    const v = game.blueprintValidation();
+    if (!v) return;
+    const t = T();
+    for (const c of v.cells) {
+      const px = c.x * t, py = c.y * t;
+      const bad = v.bad.has(FG.Utils.key(c.x, c.y));
+      ctx.fillStyle = bad ? 'rgba(224,92,92,0.18)' : 'rgba(88,194,111,0.14)';
+      ctx.fillRect(px, py, t, t);
+      ctx.strokeStyle = bad ? '#e05c5c' : '#58c26f';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(px + 1.5, py + 1.5, t - 3, t - 3);
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.5;
+      const tmp = { def: FG.Buildings.byId(c.type), type: c.type, x: c.x, y: c.y, dir: c.dir, items: [], held: null, level: 0, fluidType: null, status: 'idle', slots: { inputs: {}, outputs: {} }, chest: [], rr: 0 };
+      if (tmp.def.beltTier !== undefined) drawBelt(tmp, px, py, t);
+      else drawBuilding(tmp, px, py, t);
+      ctx.globalAlpha = 1;
+    }
+    // 整图边界框
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const c of v.cells) {
+      minX = Math.min(minX, c.x); minY = Math.min(minY, c.y);
+      maxX = Math.max(maxX, c.x); maxY = Math.max(maxY, c.y);
+    }
+    ctx.strokeStyle = v.allOk ? '#58c26f' : '#e05c5c';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(minX * t + 0.5, minY * t + 0.5, (maxX - minX + 1) * t - 1, (maxY - minY + 1) * t - 1);
   }
 
   // ==================== 幽灵预览 ====================

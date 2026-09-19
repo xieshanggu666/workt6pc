@@ -375,3 +375,44 @@ button.danger:hover { background: #4d2c2c; }
 .prio-btn.prio-high.active { background: #d96a5a; border-color: #d96a5a; color: #1a0f0f; font-weight: 600; }
 .prio-btn.prio-normal.active { background: var(--accent2); border-color: var(--accent2); color: #0e1420; font-weight: 600; }
 .prio-btn.prio-low.active { background: #6a7385; border-color: #6a7385; color: #10141c; font-weight: 600; }
+
+/* ============ 蓝图施工 ============ */
+.bld-btn.bp-tool {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  justify-content: center;
+  gap: 8px;
+  padding: 7px;
+  background: #252a3a;
+  border-color: var(--accent2);
+}
+.bld-btn.bp-tool .bp-icon {
+  font-size: 18px;
+  color: var(--accent2);
+  font-weight: 700;
+  line-height: 1;
+}
+.bld-btn.bp-tool.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px rgba(232,163,61,.55);
+  background: #3a3020;
+}
+.bld-cost {
+  font-size: 8.5px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  text-align: center;
+  line-height: 1.25;
+}
+.bp-mode-tip {
+  grid-column: 1 / -1;
+  background: var(--bg);
+  border: 1px dashed var(--accent2);
+  border-radius: 5px;
+  padding: 10px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.9;
+  text-align: center;
+}
+.bp-mode-tip b { color: var(--accent); }

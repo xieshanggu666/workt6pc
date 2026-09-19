@@ -25,6 +25,8 @@ FG.Panels = (() => {
     });
     FG.Events.on('selection:change', () => { render(); });
     FG.Events.on('recipe:change', () => { render(); });
+    FG.Events.on('construct:change', () => { render(); });
+    FG.Events.on('construct:done', () => { render(); });
     FG.Events.on('message', () => { if (activeTab === 'log') render(); });
   }
 
@@ -42,6 +44,7 @@ FG.Panels = (() => {
     const sel = game.selection;
     let html = '';
     if (!sel) {
+      html += constructionSection();
       html += `<div class="panel-sec"><h4>工厂概况</h4>
         <div class="info-grid">
           <div class="k">建筑数</div><div class="v">${game.totalBuildings()}</div>
@@ -50,13 +53,72 @@ FG.Panels = (() => {
         </div>
         <div style="color:var(--text-dim);font-size:11px;margin-top:8px;line-height:1.6">
           点击地图上的建筑查看详情。<br>
-          拖动右键平移视野，滚轮缩放。<br>
-          矿机→熔炉→组装机→科学包，最后发射卫星！
+          按 <b>B</b> 或左栏「蓝图框选」框选产线 → R 旋转 → 左键提交施工计划。<br>
+          建材从箱子/地面物料中预留并消耗；缺料会自动等待。<br>
+          拖动右键平移视野，滚轮缩放。
         </div></div>`;
+    } else if (sel.planId !== undefined) {
+      html += siteInfo(sel);
     } else {
       html += buildingInfo(sel);
     }
     bodyEl().innerHTML = html;
+  }
+
+  // ================= 蓝图施工 =================
+  function constructionSection() {
+    const con = FG.game.construction;
+    const s = con.summary();
+    if (!s.total) return '';
+    const needTxt = Object.entries(s.need).slice(0, 6)
+      .map(([id, n]) => `${FG.Items.byId(id).name}×${n}`).join('、');
+    return `<div class="panel-sec" style="border-color:#7a5a2a">
+      <h4>🏗 蓝图施工（${s.plans} 张计划 · ${s.total} 个施工点）</h4>
+      <div class="info-grid">
+        <div class="k">等待建材</div><div class="v" style="color:${s.waiting ? 'var(--orange)' : 'inherit'}">${s.waiting}</div>
+        <div class="k">施工中</div><div class="v" style="color:${s.building ? 'var(--accent2)' : 'inherit'}">${s.building}</div>
+      </div>
+      ${needTxt ? `<div style="font-size:11px;color:var(--orange);margin-top:6px">物流尚缺：<b>${needTxt}</b>
+        ${Object.keys(s.need).length > 6 ? '…' : ''}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:2px">把建材放入箱子/地面物料即自动配送</div>`
+        : `<div style="font-size:11px;color:var(--green);margin-top:6px">建材齐备，施工推进中</div>`}
+    </div>`;
+  }
+
+  function siteInfo(site) {
+    const con = FG.game.construction;
+    const def = FG.Buildings.byId(site.type);
+    const plan = con.plans.get(site.planId);
+    const st = { waiting: ['等待建材', 'var(--orange)'], building: ['施工中', 'var(--accent2)'] };
+    const [stName, stCol] = st[site.status] || ['等待建材', 'var(--orange)'];
+    let h = `<div class="panel-sec"><h4>🏗 ${def.name} · 施工点</h4>
+      <div class="info-grid">
+        <div class="k">所属蓝图</div><div class="v">${plan ? plan.name : site.planId}</div>
+        <div class="k">状态</div><div class="v" style="color:${stCol}">${stName}</div>
+        <div class="k">坐标</div><div class="v">(${site.x}, ${site.y})</div>
+        <div class="k">方向</div><div class="v">${FG.Utils.dirName(site.dir)}</div>
+        ${site.recipe ? `<div class="k">配方</div><div class="v">${FG.Recipes.byId(site.recipe).name}</div>` : ''}
+      </div>
+      <div class="progress-bar" style="margin-top:8px"><div class="fill" style="width:${(con.progressOf(site) * 100).toFixed(1)}%;background:${
+        site.status === 'waiting' ? 'linear-gradient(90deg,var(--orange),#f0c060)' : 'linear-gradient(90deg,var(--accent2),#7cc0ff)'}"></div></div>
+      </div>`;
+    // 建材预留情况
+    h += `<div class="panel-sec"><h4>建材（从物流预留并消耗）</h4>`;
+    for (const [id, need] of Object.entries(site.need)) {
+      const have = site.have[id] || 0;
+      const miss = need - have;
+      h += `<div class="slot-row${miss ? ' slot-warn' : ''}">
+        <span class="sl-name">${FG.Items.byId(id).name}</span>
+        <div class="sl-bar"><div class="fill" style="width:${Math.min(100, have / need * 100).toFixed(0)}%;background:${miss ? 'var(--orange)' : 'var(--green)'}"></div></div>
+        <span class="sl-count">${have}/${need}</span></div>`;
+    }
+    h += `<div style="font-size:10px;color:var(--text-dim);margin-top:6px;line-height:1.5">建材来源：全图箱子与地面物料堆（就近预留）。取消后已预留建材返还就近箱子，余量落地。</div></div>`;
+    // 操作：取消本点 / 取消整张蓝图
+    h += `<div class="action-row">
+      <button id="btn-site-cancel" class="danger">取消施工点（返还）</button>
+      <button id="btn-plan-cancel" class="danger">取消整张蓝图</button>
+      <button id="btn-clear">取消选择</button></div>`;
+    return h;
   }
 
   function buildingInfo(b) {
@@ -346,6 +408,21 @@ FG.Panels = (() => {
     };
     const clr = document.getElementById('btn-clear');
     if (clr) clr.onclick = () => { FG.game.selection = null; FG.Events.emit('selection:change'); };
+    // 施工点取消（返还已预留建材）
+    const sc = document.getElementById('btn-site-cancel');
+    if (sc) sc.onclick = () => {
+      const s = FG.game.selection;
+      if (s && s.planId !== undefined) FG.game.construction.cancelSite(s);
+    };
+    const pc = document.getElementById('btn-plan-cancel');
+    if (pc) pc.onclick = () => {
+      const s = FG.game.selection;
+      if (s && s.planId !== undefined) {
+        FG.game.construction.cancelPlan(s.planId);
+        FG.game.selection = null;
+        FG.Events.emit('selection:change');
+      }
+    };
     for (const el of document.querySelectorAll('.recipe-btn')) {
       el.onclick = () => {
         const b = FG.game.selection;

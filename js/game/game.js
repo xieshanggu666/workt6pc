@@ -6,6 +6,7 @@ FG.Game = class Game {
     this.state = 'menu';          // 'menu' | 'playing'
     this.map = null;
     this.sim = null;
+    this.construction = new FG.Construction();
     this.stats = new FG.Stats();
     this.research = new FG.ResearchMgr(this);
     this.speed = 1;
@@ -15,8 +16,12 @@ FG.Game = class Game {
     this.simAcc = 0;
     this.autosaveTimer = 0;
     this.camera = { x: 0, y: 0, zoom: 1 };
-    this.selection = null;        // 选中的建筑
+    this.selection = null;        // 选中的建筑/施工点
     this.ghost = null;            // {type, dir}
+    // 蓝图模式：mode=null | 'capturing'（框选） | 'placing'（旋转预览/提交）
+    this.bpMode = null;
+    this.blueprint = null;        // {entities,w,h,rot,ax,ay}
+    this.dragRect = null;         // 框选矩形 {x0,y0,x1,y1}
     this.showStatus = false;      // 状态高亮开关
     this.log = [];
     this.saveInfo = { slot: null, name: '', startDate: Date.now() };
@@ -40,6 +45,8 @@ FG.Game = class Game {
     }
     this.sim = new FG.Sim();
     this.sim.init(this);
+    this.construction = new FG.Construction();
+    this.construction.init(this);
     this.stats = new FG.Stats();
     this.research = new FG.ResearchMgr(this);
     this.tickCount = 0;
@@ -48,6 +55,9 @@ FG.Game = class Game {
     this.autosaveTimer = 0;
     this.selection = null;
     this.ghost = null;
+    this.bpMode = null;
+    this.blueprint = null;
+    this.dragRect = null;
     this.saveInfo = { slot: slot || null, name: name || '未命名工厂', startDate: Date.now() };
     this.mapInfo = {
       presetId: gen.presetId, sizeId: gen.sizeId || 'medium',
@@ -100,6 +110,7 @@ FG.Game = class Game {
         piles,
       },
       buildings: blds,
+      construction: this.construction.serialize(),
       research: {
         completed: Array.from(this.research.completed),
         current: this.research.current ? this.research.current.id : null,
@@ -170,6 +181,8 @@ FG.Game = class Game {
       this.research.points = data.research.points || {};
       if (data.research.current) this.research.current = FG.Research.byId(data.research.current);
     }
+    // 恢复施工计划：施工点（含已预留建材/进度）在真实建筑载入后恢复，继续等待/施工
+    this.construction.deserialize(data.construction);
     if (data.totals) {
       this.stats.totals = data.totals;
       for (const id of Object.keys(data.totals)) this.stats.recordProduce(id, 0); // 登记 itemIds
@@ -227,6 +240,8 @@ FG.Game = class Game {
   }
 
   tickOnce() {
+    // 蓝图施工先于仿真推进：本 tick 建成的建筑即刻注册，同 tick 调度器即可识别并供料
+    this.construction.tick();
     this.sim.tick();
     this.tickCount++;
   }
@@ -234,6 +249,7 @@ FG.Game = class Game {
   // ================= 建筑放置 =================
   setGhost(type) {
     if (!this.research.isBuildingUnlocked(type)) return;
+    this.cancelBlueprint();
     this.ghost = { type, dir: 0 };
     this.selection = null;
     FG.Events.emit('ghost:change');
@@ -248,10 +264,76 @@ FG.Game = class Game {
     FG.Events.emit('ghost:change');
   }
 
+  // ================= 蓝图施工 =================
+  /** 进入框选模式（拖出矩形生成蓝图） */
+  startCapture() {
+    this.cancelGhost();
+    this.bpMode = 'capturing';
+    this.blueprint = null;
+    this.dragRect = null;
+    FG.Events.emit('bp:change');
+  }
+
+  /** 框选结束：生成蓝图并进入旋转预览/放置模式；矩形内无建筑则取消 */
+  finishCapture(x0, y0, x1, y1) {
+    const bp = this.construction.capture(x0, y0, x1, y1);
+    this.dragRect = null;
+    if (!bp) {
+      this.bpMode = null;
+      this.logMsg('框选范围内没有可生成蓝图的产线建筑', 'error');
+      FG.Events.emit('bp:change');
+      return;
+    }
+    bp.rot = 0;
+    this.blueprint = bp;
+    this.bpMode = 'placing';
+    this.logMsg(`已生成蓝图：${bp.entities.length} 个建筑，R 旋转，左键提交施工计划`, 'info');
+    FG.Events.emit('bp:change');
+  }
+
+  /** 旋转预览中的蓝图 */
+  rotateBlueprint() {
+    if (this.bpMode !== 'placing' || !this.blueprint) return;
+    this.blueprint.rot = (this.blueprint.rot + 1) % 4;
+    FG.Events.emit('bp:change');
+  }
+
+  /** 更新预览锚点（鼠标所在格） */
+  setBlueprintAnchor(x, y) {
+    if (!this.blueprint) return;
+    this.blueprint.ax = x;
+    this.blueprint.ay = y;
+  }
+
+  /** 当前预览的逐格校验（渲染/提交共用） */
+  blueprintValidation() {
+    const bp = this.blueprint;
+    if (!bp || bp.ax === undefined) return null;
+    return this.construction.validate(bp, bp.ax, bp.ay, bp.rot);
+  }
+
+  /** 左键提交施工计划（科技+地形校验，全部合法才提交） */
+  submitBlueprintAt(x, y) {
+    const bp = this.blueprint;
+    if (!bp) return false;
+    const id = this.construction.submitPlan(bp, x, y, bp.rot);
+    if (id) this.cancelBlueprint();
+    return !!id;
+  }
+
+  /** 退出蓝图模式（仅丢弃蓝图预览/框选，不影响已提交施工计划） */
+  cancelBlueprint() {
+    this.bpMode = null;
+    this.blueprint = null;
+    this.dragRect = null;
+    FG.Events.emit('bp:change');
+  }
+
   canPlace(type, x, y) {
     const def = FG.Buildings.byId(type);
     if (!this.map.inBounds(x, y)) return false;
     if (this.map.isOccupied(x, y)) return false;
+    if (this.construction.isSite(x, y)) return false; // 施工点占位：幻影/真实建筑均不可重叠
     const terr = this.map.terrainAt(x, y);
     if (terr === 'water') {
       return type === 'pump';
@@ -378,6 +460,10 @@ FG.Game = class Game {
       }
     }
     for (const pile of this.map.piles.values()) for (const s of pile) add(s.type, s.count);
+    // 蓝图施工点中「已从物流预留但尚未消耗」的建材（建成前仍计入全图库存）
+    for (const site of this.construction.sites.values()) {
+      for (const [id, n] of Object.entries(site.have)) add(id, n);
+    }
     return counts;
   }
 

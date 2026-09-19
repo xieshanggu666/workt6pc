@@ -10,6 +10,7 @@
 
   let panning = false;
   let dragPlace = null;      // {lastX, lastY} 传送带拖拽放置
+  let bpDragging = false;    // 蓝图框选拖拽中
 
   // ================= 初始化 =================
   function init() {
@@ -54,6 +55,12 @@
           }
         }
       }
+      // 蓝图框选：实时更新矩形
+      if (bpDragging && FG.game.bpMode === 'capturing') {
+        FG.game.dragRect = { x0: bpDragging.x0, y0: bpDragging.y0, x1: tile.x, y1: tile.y };
+      }
+      // 蓝图放置：跟随鼠标更新预览锚点
+      if (FG.game.bpMode === 'placing') FG.game.setBlueprintAnchor(tile.x, tile.y);
       updateTooltip(e.clientX - wrap.getBoundingClientRect().left, e.clientY - wrap.getBoundingClientRect().top, tile);
     });
 
@@ -65,6 +72,17 @@
         return;
       }
       if (e.button === 0) {
+        // 蓝图框选：按下开始拖矩形
+        if (FG.game.bpMode === 'capturing') {
+          bpDragging = { x0: tile.x, y0: tile.y };
+          FG.game.dragRect = { x0: tile.x, y0: tile.y, x1: tile.x, y1: tile.y };
+          return;
+        }
+        // 蓝图放置：左键提交施工计划（科技+地形校验）
+        if (FG.game.bpMode === 'placing') {
+          FG.game.submitBlueprintAt(tile.x, tile.y);
+          return;
+        }
         if (FG.game.ghost) {
           if (FG.Buildings.byId(FG.game.ghost.type).beltTier !== undefined) {
             dragPlace = { lastX: tile.x, lastY: tile.y };
@@ -73,8 +91,11 @@
             FG.game.placeGhost(tile.x, tile.y);
           }
         } else {
+          // 优先选中施工点（蓝图幻影），其次真实建筑
+          const site = FG.game.construction.siteAt(tile.x, tile.y);
           const b = FG.game.map.buildingAt(tile.x, tile.y);
-          if (b) FG.game.selectBuilding(b);
+          if (site) FG.game.selectBuilding(site);
+          else if (b) FG.game.selectBuilding(b);
           else { FG.game.selection = null; FG.Events.emit('selection:change'); }
         }
       }
@@ -82,11 +103,20 @@
 
     window.addEventListener('mouseup', (e) => {
       if (e.button === 2 || e.button === 1) panning = false;
-      if (e.button === 0) dragPlace = null;
+      if (e.button === 0) {
+        dragPlace = null;
+        // 蓝图框选结束 → 生成蓝图进入旋转预览
+        if (bpDragging && FG.game.bpMode === 'capturing' && FG.game.dragRect) {
+          const r = FG.game.dragRect;
+          FG.game.finishCapture(r.x0, r.y0, r.x1, r.y1);
+        }
+        bpDragging = false;
+      }
     });
 
     canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (FG.game.bpMode) { bpDragging = false; FG.game.cancelBlueprint(); return; }
       if (FG.game.ghost) FG.game.cancelGhost();
     });
 
@@ -111,6 +141,7 @@
       if (e.key === 'Escape') {
         if (modalOpen) { FG.Modals.closeAll(); return; }
         if (techOpen) { FG.Tech.close(); return; }
+        if (game.bpMode) { game.cancelBlueprint(); return; }
         if (game.ghost) { game.cancelGhost(); return; }
         game.selection = null;
         FG.Events.emit('selection:change');
@@ -120,13 +151,23 @@
 
       switch (e.key) {
         case 'r': case 'R':
-          if (game.ghost) game.rotateGhost();
-          else if (game.selection && (game.selection.def.beltTier !== undefined || game.selection.def.inserterTier !== undefined)) {
+          if (game.bpMode === 'placing') game.rotateBlueprint();
+          else if (game.ghost) game.rotateGhost();
+          else if (game.selection && game.selection.planId === undefined
+                   && (game.selection.def.beltTier !== undefined || game.selection.def.inserterTier !== undefined)) {
             game.selection.dir = (game.selection.dir + 1) % 4;
           }
           break;
+        case 'b': case 'B':
+          if (game.bpMode) game.cancelBlueprint();
+          else game.startCapture();
+          break;
         case 'Delete': case 'Backspace':
-          if (game.selection) game.removeBuilding(game.selection);
+          if (game.selection && game.selection.planId !== undefined) {
+            game.construction.cancelSite(game.selection); // 取消施工点并返还建材
+          } else if (game.selection) {
+            game.removeBuilding(game.selection);
+          }
           break;
         case ' ':
           e.preventDefault();
@@ -151,10 +192,62 @@
     const m = game.map;
     if (!m || !m.inBounds(tile.x, tile.y)) { tooltip.classList.add('hidden'); return; }
 
+    // 蓝图模式提示
+    if (game.bpMode === 'capturing') {
+      tooltip.innerHTML = `<div class="tt-title">▭ 蓝图框选</div>
+        <div class="tt-row">按住左键拖出矩形，框住已有产线</div>`;
+      tooltip.classList.remove('hidden');
+      tooltip.style.left = Math.min(px + 14, wrap.clientWidth - 250) + 'px';
+      tooltip.style.top = Math.min(py + 14, wrap.clientHeight - 100) + 'px';
+      return;
+    }
+    if (game.bpMode === 'placing' && game.blueprint) {
+      game.setBlueprintAnchor(tile.x, tile.y);
+      const v = game.blueprintValidation();
+      const cost = FG.Construction.totalCost(game.blueprint);
+      const costTxt = Object.entries(cost).map(([id, n]) =>
+        `${FG.Items.byId(id).name}×${n}`).join('、');
+      let html = `<div class="tt-title">▭ 放置蓝图（${v.count} 个建筑）</div>
+        <div class="tt-row">R 旋转 · 左键提交 · 右键/Esc 放弃</div>
+        <div class="tt-row">建材：<b>${costTxt || '无'}</b></div>`;
+      if (!v.allOk) {
+        // 统计因未解锁/因地形占位而非法的格子数
+        let lockedCells = 0;
+        for (const c of v.cells) {
+          if (v.bad.has(FG.Utils.key(c.x, c.y)) && v.locked.has(c.type)) lockedCells++;
+        }
+        const terrainCells = v.bad.size - lockedCells;
+        html += `<div class="tt-row" style="color:var(--red)">校验失败：${
+          lockedCells ? '未解锁 ×' + lockedCells : ''
+        }${lockedCells && terrainCells ? '；' : ''}${
+          terrainCells ? '不可放置 ×' + terrainCells : ''}</div>`;
+      } else {
+        html += `<div class="tt-row" style="color:var(--green)">科技与地形校验通过，可提交</div>`;
+      }
+      tooltip.innerHTML = html;
+      tooltip.classList.remove('hidden');
+      tooltip.style.left = Math.min(px + 14, wrap.clientWidth - 250) + 'px';
+      tooltip.style.top = Math.min(py + 14, wrap.clientHeight - 130) + 'px';
+      return;
+    }
+
     const b = m.buildingAt(tile.x, tile.y);
-    const pile = !b ? m.pileAt(tile.x, tile.y) : null;
+    const site = game.construction.siteAt(tile.x, tile.y);
+    const pile = !b && !site ? m.pileAt(tile.x, tile.y) : null;
     let html = '';
-    if (b) {
+    if (site) {
+      const st = { waiting: '等待建材', building: '施工中' };
+      html += `<div class="tt-title">🏗 ${FG.Buildings.byId(site.type).name}（施工点）</div>`;
+      html += `<div class="tt-row">状态：<b>${st[site.status]}</b> · ${(game.construction.progressOf(site) * 100).toFixed(0)}%</div>`;
+      const missing = Object.keys(site.need).filter(it => (site.have[it] || 0) < site.need[it]);
+      if (missing.length) {
+        html += `<div class="tt-row" style="color:var(--orange)">缺料：${missing.map(it =>
+          `${FG.Items.byId(it).name} ${site.need[it] - (site.have[it] || 0)}/${site.need[it]}`).join('、')}</div>`;
+      } else {
+        html += `<div class="tt-row" style="color:var(--green)">建材齐备，建造中…</div>`;
+      }
+      html += `<div class="tt-row" style="margin-top:3px">Delete 取消（返还已预留建材）</div>`;
+    } else if (b) {
       const st = { working: '生产中/流动', starving: '缺料', blocked: '堵塞', idle: '闲置', empty: '枯竭' };
       html += `<div class="tt-title">${b.def.name}</div>`;
       html += `<div class="tt-row">状态：<b>${st[b.status] || b.status}</b></div>`;

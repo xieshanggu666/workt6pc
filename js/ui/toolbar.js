@@ -20,7 +20,15 @@ FG.Toolbar = (() => {
     hintEl().textContent = HINTS[activeCat];
     FG.Events.on('research:complete', renderBuildings);
     FG.Events.on('ghost:change', () => { renderBuildings(); });
+    FG.Events.on('bp:change', () => { renderBuildings(); });
     FG.Events.on('game:start', () => { renderBuildings(); });
+  }
+
+  /** 建材需求短文本：铁板×2 齿轮×1 */
+  function costText(type) {
+    const cost = FG.Buildings.costOf(type);
+    return Object.entries(cost).map(([id, n]) =>
+      (FG.Items.byId(id) ? FG.Items.byId(id).name : id) + '×' + n).join(' ');
   }
 
   function renderCats() {
@@ -40,13 +48,41 @@ FG.Toolbar = (() => {
   }
 
   function renderBuildings() {
-    listEl().innerHTML = '';
+    const el = listEl();
+    el.innerHTML = '';
     const game = FG.game;
+
+    // 蓝图工具卡（置于建筑列表顶部，跨全部分类）
+    const bpBtn = document.createElement('button');
+    const bpActive = game.bpMode !== null;
+    bpBtn.className = 'bld-btn bp-tool' + (bpActive ? ' selected' : '');
+    bpBtn.innerHTML = `<span class="bp-icon">▭</span><span class="bld-name">${
+      game.bpMode === 'capturing' ? '框选中…' : game.bpMode === 'placing' ? '放置蓝图…' : '蓝图框选 (B)'
+    }</span>`;
+    bpBtn.title = '框选已有产线生成蓝图，R 旋转预览，左键提交施工计划。建材从箱子/地面物料预留并消耗。';
+    bpBtn.onclick = () => { if (game.bpMode) game.cancelBlueprint(); else game.startCapture(); };
+    el.appendChild(bpBtn);
+
+    // 蓝图模式下：提示性占位，列表隐藏建筑以免误放
+    if (game.bpMode) {
+      const tip = document.createElement('div');
+      tip.className = 'bp-mode-tip';
+      tip.innerHTML = game.bpMode === 'capturing'
+        ? '在地图上<b>按住左键拖出矩形</b>框选产线<br>右键 / Esc 取消'
+        : '移动鼠标<b>预览</b>位置 · <b>R</b> 旋转<br><b>左键</b>提交施工计划<br>右键 / Esc 放弃蓝图';
+      el.appendChild(tip);
+      hintEl().textContent = game.bpMode === 'capturing'
+        ? '框选模式：按住左键拖出矩形，框住已有产线生成蓝图。'
+        : '放置模式：R 旋转预览，左键提交施工计划（按科技与地形校验）。';
+      return;
+    }
+
     for (const def of FG.Buildings.byCat(activeCat)) {
       const unlocked = game.research.isBuildingUnlocked(def.id);
       const btn = document.createElement('button');
       btn.className = 'bld-btn' + (unlocked ? '' : ' locked') + (game.ghost && game.ghost.type === def.id ? ' selected' : '');
-      btn.title = def.desc;
+      const ct = costText(def.id);
+      btn.title = def.desc + (ct ? '\n建材：' + ct + '（蓝图施工消耗）' : '');
       const icon = FG.Renderer.buildingIcon(def.id, 40);
       icon.width = 40; icon.height = 40;
       btn.appendChild(icon);
@@ -54,6 +90,12 @@ FG.Toolbar = (() => {
       name.className = 'bld-name';
       name.textContent = def.name;
       btn.appendChild(name);
+      if (ct) {
+        const cost = document.createElement('span');
+        cost.className = 'bld-cost';
+        cost.textContent = ct;
+        btn.appendChild(cost);
+      }
       if (!unlocked) {
         btn.title = '需要研究：' + (FG.Research.byId(def.unlockedBy) ? FG.Research.byId(def.unlockedBy).name : def.unlockedBy);
         btn.onclick = () => {
@@ -66,8 +108,9 @@ FG.Toolbar = (() => {
           else game.setGhost(def.id);
         };
       }
-      listEl().appendChild(btn);
+      el.appendChild(btn);
     }
+    hintEl().textContent = HINTS[activeCat];
   }
 
   return { init, renderBuildings };
