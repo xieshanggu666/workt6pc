@@ -5,7 +5,7 @@
 window.FG = window.FG || {};
 
 FG.Config = {
-  VERSION: '1.2.0',
+  VERSION: '1.3.0',
 
   // 仿真节拍：每秒 20 tick
   TPS: 20,
@@ -31,6 +31,10 @@ FG.Config = {
   PRIORITIES: { low: 1, normal: 2, high: 3 },
   // 机械臂从传送带上抓取时，夹爪到物品的最大距离（格，0~1）
   INSERTER_PICK_REACH: 0.8,
+
+  // 蓝图施工
+  BP_MAX_AREA: 400,              // 框选蓝图的最大格数
+  CONSTRUCT_BUILD_INTERVAL: 4,   // 施工计划相邻两栋建筑落成的 tick 间隔
 
   // 各类建筑槽位容量
   SLOT_CAP: 100,          // 生产建筑输入/输出槽

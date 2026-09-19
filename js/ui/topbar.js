@@ -14,6 +14,11 @@ FG.Topbar = (() => {
     document.getElementById('btn-pause').onclick = () => FG.game.togglePause();
     document.getElementById('btn-tech').onclick = () => FG.Tech.open();
     document.getElementById('btn-menu').onclick = () => FG.Modals.menu();
+    document.getElementById('btn-blueprint').onclick = () => FG.game.toggleBlueprintMode();
+
+    FG.Events.on('blueprint:mode', (m) => {
+      document.getElementById('btn-blueprint').classList.toggle('active', !!m);
+    });
 
     FG.Events.on('speed:change', (s) => {
       document.querySelectorAll('#speed-btns button').forEach(b =>

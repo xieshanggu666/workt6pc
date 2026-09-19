@@ -179,7 +179,12 @@ FG.Modals = (() => {
         <b style="color:var(--accent)">操作</b>：<br>
         左键 放置/选择 · 右键拖拽 平移 · 滚轮 缩放<br>
         R 旋转 · Del 拆除 · 空格 暂停 · T 科技树<br>
-        Esc 取消放置 · S 状态高亮 · 1-4 游戏速度<br><br>
+        Esc 取消放置 · S 状态高亮 · 1-4 游戏速度<br>
+        B 蓝图：框选产线 → 移动预览、R 旋转 → 左键提交施工<br><br>
+        <b style="color:var(--accent)">蓝图施工</b>：<br>
+        施工计划按科技与地形校验，自动从<b>箱子/地面物料堆</b>预留建材；<br>
+        缺料时等待补货，可在「施工」页取消并返还建材；<br>
+        建成后自动接入生产调度，施工进度随存档恢复。<br><br>
         <b style="color:var(--accent)">提示</b>：缺料(红)与堵塞(橙)会用颜色高亮，统计面板会列出瓶颈。
       </div>
       <div class="m-btns"><button id="h-close">关闭</button></div>`;

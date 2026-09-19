@@ -25,6 +25,8 @@ FG.Panels = (() => {
     });
     FG.Events.on('selection:change', () => { render(); });
     FG.Events.on('recipe:change', () => { render(); });
+    FG.Events.on('construction:change', () => { if (activeTab === 'build') render(); });
+    FG.Events.on('blueprint:change', () => { if (activeTab === 'build') render(); });
     FG.Events.on('message', () => { if (activeTab === 'log') render(); });
   }
 
@@ -32,6 +34,7 @@ FG.Panels = (() => {
     if (!FG.game || FG.game.state !== 'playing') return;
     if (activeTab === 'info') renderInfo();
     else if (activeTab === 'stats') renderStats();
+    else if (activeTab === 'build') renderBuild();
     else if (activeTab === 'log') renderLog();
     bindActions();
   }
@@ -321,6 +324,67 @@ FG.Panels = (() => {
       const r = stats.rate(id);
       ctx.fillText(`${FG.Items.byId(id).name} 产出${FG.Utils.fmtRate(r.p)}`, pad + 4, 14 + i * 12);
     });
+  }
+
+  // ================= 施工（蓝图） =================
+  function renderBuild() {
+    const game = FG.game;
+    const cons = game.construction;
+    let h = '';
+
+    // 当前蓝图（剪贴板）
+    h += `<div class="panel-sec"><h4>蓝图</h4>`;
+    if (game.blueprint) {
+      const bp = game.blueprint;
+      const cost = FG.Blueprint.costOf(bp);
+      const costTxt = Object.keys(cost).map(k => FG.Items.byId(k).name + '×' + cost[k]).join('　');
+      h += `<div class="info-grid">
+        <div class="k">规模</div><div class="v">${bp.entries.length} 栋 · ${bp.w}×${bp.h}</div>
+        <div class="k">建材</div><div class="v" style="font-family:inherit">${costTxt || '无'}</div>
+      </div>
+      <div style="color:var(--text-dim);font-size:11px;margin-top:6px;line-height:1.6">
+        按 <b>B</b> 放置预览：移动选位、<b>R</b> 旋转、左键提交施工计划；再按 <b>B</b> 重新框选。
+      </div>`;
+    } else {
+      h += `<div style="color:var(--text-dim);font-size:11px;line-height:1.7">
+        按 <b>B</b> 进入蓝图模式：框选已有产线生成蓝图，旋转预览后提交施工计划。<br>
+        施工计划自动从<b>箱子 / 地面物料堆</b>预留建材；缺料时等待，取消时返还。
+      </div>`;
+    }
+    h += `</div>`;
+
+    // 施工计划列表
+    h += `<div class="panel-sec"><h4>施工计划（${cons.plans.length}）</h4>`;
+    if (!cons.plans.length) {
+      h += `<div style="color:var(--text-dim);font-size:11px">暂无进行中的施工计划</div>`;
+    }
+    for (const p of cons.plans) {
+      const total = p.entries.length;
+      const done = p.entries.filter(e => e.state === 'done').length;
+      const skipped = p.entries.filter(e => e.state === 'skip').length;
+      const cur = p.entries[p.cursor];
+      const status = p.waiting
+        ? '<b style="color:var(--orange)">缺料等待</b>'
+        : '<b style="color:var(--accent2)">施工中</b>';
+      h += `<div class="bp-plan">
+        <div class="bp-head"><span>${p.name}</span>${status}</div>
+        <div class="progress-bar"><div class="fill" style="width:${(done / total * 100).toFixed(1)}%"></div></div>
+        <div style="font-size:11px;color:var(--text-dim)">进度 ${done}/${total} 栋${skipped ? ' · 跳过 ' + skipped : ''}</div>`;
+      if (cur && cur.state === 'wait') {
+        const def = FG.Buildings.byId(cur.type);
+        const cost = FG.Buildings.costOf(cur.type);
+        const parts = Object.keys(cost).map(k =>
+          `${FG.Items.byId(k).name} ${Math.min(p.stock[k] || 0, cost[k])}/${cost[k]}`);
+        h += `<div style="font-size:11px;color:var(--text-dim);margin-top:3px">待建：${def.name}（${cur.x},${cur.y}）${parts.length ? ' · ' + parts.join(' · ') : ''}</div>`;
+      }
+      h += `<div class="action-row"><button data-cancel-plan="${p.id}" class="danger">取消并返还建材</button></div>
+      </div>`;
+    }
+    h += `</div>`;
+    bodyEl().innerHTML = h;
+    for (const el of bodyEl().querySelectorAll('[data-cancel-plan]')) {
+      el.onclick = () => { FG.game.cancelConstruction(el.dataset.cancelPlan); };
+    }
   }
 
   // ================= 日志 =================

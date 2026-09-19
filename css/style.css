@@ -375,3 +375,18 @@ button.danger:hover { background: #4d2c2c; }
 .prio-btn.prio-high.active { background: #d96a5a; border-color: #d96a5a; color: #1a0f0f; font-weight: 600; }
 .prio-btn.prio-normal.active { background: var(--accent2); border-color: var(--accent2); color: #0e1420; font-weight: 600; }
 .prio-btn.prio-low.active { background: #6a7385; border-color: #6a7385; color: #10141c; font-weight: 600; }
+
+/* 蓝图施工 */
+.bp-plan {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+.bp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12px; margin-bottom: 4px;
+}
+.bp-plan .action-row { margin-top: 6px; }
+.bp-plan .action-row button { flex: 1; font-size: 11px; padding: 3px 6px; }

@@ -18,6 +18,11 @@ FG.Game = class Game {
     this.selection = null;        // 选中的建筑
     this.ghost = null;            // {type, dir}
     this.showStatus = false;      // 状态高亮开关
+    // 蓝图施工
+    this.construction = new FG.Construction(this); // 施工计划管理器
+    this.bpMode = null;           // 蓝图模式：null | 'select'(框选) | 'place'(放置预览)
+    this.blueprint = null;        // 当前蓝图（剪贴板）：{w,h,entries}
+    this.bpSelect = null;         // 框选拖拽矩形 {x0,y0,x1,y1}
     this.log = [];
     this.saveInfo = { slot: null, name: '', startDate: Date.now() };
     this.mapInfo = { presetId: 'greenfield', sizeId: 'medium', seed: 1, biome: 'grass' };
@@ -48,6 +53,10 @@ FG.Game = class Game {
     this.autosaveTimer = 0;
     this.selection = null;
     this.ghost = null;
+    this.construction = new FG.Construction(this);
+    this.bpMode = null;
+    this.blueprint = null;
+    this.bpSelect = null;
     this.saveInfo = { slot: slot || null, name: name || '未命名工厂', startDate: Date.now() };
     this.mapInfo = {
       presetId: gen.presetId, sizeId: gen.sizeId || 'medium',
@@ -106,6 +115,8 @@ FG.Game = class Game {
         points: this.research.points,
       },
       totals: this.stats.totals,
+      construction: this.construction.serialize(),   // 施工计划（进度随存档恢复）
+      blueprint: this.blueprint,                     // 蓝图剪贴板
       meta: { playTime: this.playTime, name: this.saveInfo.name, startDate: this.saveInfo.startDate },
     };
   }
@@ -174,6 +185,9 @@ FG.Game = class Game {
       this.stats.totals = data.totals;
       for (const id of Object.keys(data.totals)) this.stats.recordProduce(id, 0); // 登记 itemIds
     }
+    // 施工计划与蓝图剪贴板（旧存档无此字段 → 空计划/空剪贴板）
+    this.construction.deserialize(data.construction || null);
+    this.blueprint = data.blueprint || null;
     this.logMsg('存档已载入', 'info');
     FG.Events.emit('game:start');
   }
@@ -228,6 +242,7 @@ FG.Game = class Game {
 
   tickOnce() {
     this.sim.tick();
+    this.construction.tick();   // 施工计划：备料 → 落成
     this.tickCount++;
   }
 
@@ -349,6 +364,76 @@ FG.Game = class Game {
   }
 
   selectBuilding(b) { this.selection = b; FG.Events.emit('selection:change', b); }
+
+  // ================= 蓝图施工 =================
+  /** 切换蓝图模式：无 → 有剪贴板则放置、否则框选；放置 → 框选；框选 → 退出 */
+  toggleBlueprintMode() {
+    if (this.state !== 'playing') return;
+    if (!this.bpMode) {
+      this.cancelGhost();
+      this.selection = null;
+      FG.Events.emit('selection:change');
+      this.bpMode = this.blueprint ? 'place' : 'select';
+    } else if (this.bpMode === 'place') {
+      this.bpMode = 'select';   // 已有蓝图时按 B 可重新框选
+    } else {
+      this.bpMode = null;
+    }
+    this.bpSelect = null;
+    FG.Events.emit('blueprint:mode', this.bpMode);
+  }
+
+  exitBlueprintMode() {
+    if (!this.bpMode) return;
+    this.bpMode = null;
+    this.bpSelect = null;
+    FG.Events.emit('blueprint:mode', null);
+  }
+
+  /** 框选产线生成蓝图（剪贴板），成功后进入放置预览模式 */
+  captureBlueprint(x0, y0, x1, y1) {
+    const w = Math.abs(x1 - x0) + 1, h = Math.abs(y1 - y0) + 1;
+    if (w * h > FG.Config.BP_MAX_AREA) {
+      this.logMsg('框选区域过大（' + w + '×' + h + '），上限 ' + FG.Config.BP_MAX_AREA + ' 格', 'error');
+      return 0;
+    }
+    const bp = FG.Blueprint.capture(this.map, x0, y0, x1, y1);
+    if (!bp.entries.length) {
+      this.logMsg('框选区域内没有建筑', 'error');
+      return 0;
+    }
+    this.blueprint = bp;
+    this.bpMode = 'place';
+    this.logMsg('📐 蓝图已生成：' + bp.entries.length + ' 栋建筑（' + bp.w + '×' + bp.h
+      + '）—— 移动预览，R 旋转，左键提交施工，Esc 退出', 'info');
+    FG.Events.emit('blueprint:change');
+    FG.Events.emit('blueprint:mode', 'place');
+    return bp.entries.length;
+  }
+
+  /** 旋转预览：蓝图顺时针转 90° */
+  rotateBlueprint() {
+    if (!this.blueprint) return;
+    this.blueprint = FG.Blueprint.rotate(this.blueprint);
+    FG.Events.emit('blueprint:change');
+  }
+
+  /** 提交施工计划：按科技与地形校验，全部通过后进入施工队列 */
+  submitBlueprintPlan(ox, oy) {
+    if (!this.blueprint) return false;
+    const v = FG.Blueprint.validate(this, this.blueprint, ox, oy);
+    if (!v.ok) {
+      this.logMsg('❌ 无法提交施工计划：' + v.reason, 'error');
+      return false;
+    }
+    const plan = this.construction.addPlan(this.blueprint, ox, oy);
+    this.logMsg('🏗 已提交施工计划「' + plan.name + '」：' + plan.entries.length
+      + ' 栋建筑，开始从物流（箱子/地面堆）预留建材', 'info');
+    return true;
+  }
+
+  /** 取消施工计划：已预留建材返还物流，已建成建筑保留 */
+  cancelConstruction(planId) { return this.construction.cancel(planId); }
 
   setSpeed(s) { this.speed = s; FG.Events.emit('speed:change', s); }
   togglePause() { this.paused = !this.paused; FG.Events.emit('pause:change', this.paused); }

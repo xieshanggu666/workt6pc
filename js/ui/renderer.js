@@ -52,6 +52,9 @@ FG.Renderer = (() => {
     drawOre(x0, y0, x1, y1);
     drawGrid(x0, y0, x1, y1);
     drawBuildings(x0, y0, x1, y1);
+    drawConstruction();
+    drawBlueprintSelect();
+    drawBlueprintGhost();
     drawGhost();
 
     ctx.restore();
@@ -484,6 +487,75 @@ FG.Renderer = (() => {
     ctx.fillStyle = '#2b3140';
     ctx.beginPath(); ctx.arc(cx, cy, r * 0.35, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+  }
+
+  // ==================== 蓝图施工 ====================
+  /** 施工计划：待建建筑虚线轮廓（当前待建高亮；缺料等待变橙色） */
+  function drawConstruction() {
+    const cons = game.construction;
+    if (!cons || !cons.plans.length) return;
+    const t = T();
+    for (const p of cons.plans) {
+      const cur = p.entries[p.cursor];
+      for (const e of p.entries) {
+        if (e.state !== 'wait') continue;
+        const px = e.x * t, py = e.y * t;
+        const isCur = cur === e;
+        ctx.globalAlpha = isCur ? 0.5 : 0.28;
+        ctx.drawImage(buildingIcon(e.type, 32, e.dir), px, py, t, t);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = isCur ? (p.waiting ? '#e8a33d' : '#4da3ff') : 'rgba(77,163,255,0.45)';
+        ctx.lineWidth = isCur ? 2 : 1;
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(px + 1.5, py + 1.5, t - 3, t - 3);
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  /** 蓝图框选：拖拽矩形 */
+  function drawBlueprintSelect() {
+    const r = game.bpSelect;
+    if (!r || game.bpMode !== 'select') return;
+    const t = T();
+    const x = Math.min(r.x0, r.x1) * t, y = Math.min(r.y0, r.y1) * t;
+    const w = (Math.abs(r.x1 - r.x0) + 1) * t, h = (Math.abs(r.y1 - r.y0) + 1) * t;
+    ctx.fillStyle = 'rgba(77,163,255,0.12)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#4da3ff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    ctx.setLineDash([]);
+  }
+
+  /** 蓝图放置预览：逐格绿/红校验着色，R 旋转后实时刷新 */
+  function drawBlueprintGhost() {
+    if (game.bpMode !== 'place' || !game.blueprint) return;
+    const bp = game.blueprint;
+    const gx = lastMouseTile.x, gy = lastMouseTile.y;
+    if (gx === null || gx === undefined) return;
+    const t = T();
+    const v = FG.Blueprint.validate(game, bp, gx, gy);
+    // 整体范围
+    ctx.strokeStyle = v.ok ? 'rgba(88,194,111,0.6)' : 'rgba(224,92,92,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(gx * t + 0.5, gy * t + 0.5, bp.w * t - 1, bp.h * t - 1);
+    ctx.setLineDash([]);
+    for (let i = 0; i < bp.entries.length; i++) {
+      const e = bp.entries[i];
+      const px = (gx + e.dx) * t, py = (gy + e.dy) * t;
+      const ok = v.cells[i].ok;
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(buildingIcon(e.type, 32, e.dir), px, py, t, t);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = ok ? 'rgba(88,194,111,0.14)' : 'rgba(224,92,92,0.3)';
+      ctx.fillRect(px, py, t, t);
+      ctx.strokeStyle = ok ? 'rgba(88,194,111,0.7)' : '#e05c5c';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px + 0.5, py + 0.5, t - 1, t - 1);
+    }
   }
 
   // ==================== 幽灵预览 ====================
